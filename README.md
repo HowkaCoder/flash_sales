@@ -1,7 +1,3 @@
-Вот пример `README.md` для твоего проекта:
-
----
-
 # Flash Sales Microservices Project
 
 ## Overview
@@ -63,6 +59,3 @@ This project was developed in a short amount of time, and while it is currently 
 
 In the future, I aim to expand the system by implementing a fully-fledged CI/CD pipeline, adding K8s support for service orchestration, and improving overall system security and scalability. Although it’s a basic prototype, it can serve as a starting point for handling large-scale flash sales applications.
 
----
-
-This `README.md` explains your project, the technologies you used, future plans, and justifies its current state given your time constraints.
