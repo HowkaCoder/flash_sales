@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+
+package sales;
+
+option go_package = "protoc/sales;sales";
+
+service Sales {
+	rpc CreateSales (CreateSalesRequest) returns (CreateSalesResponse);
+	rpc GetAllSales (GetAllSalesRequest) returns (GetAllSalesResponse);
+	rpc GetSalesById (GetSalesByIdRequest) returns (GetSalesByIdResponse);
+	rpc UpdateSales (UpdateSalesRequest) returns (UpdateSalesResponse);
+	rpc DeleteSales (DeleteSalesRequest) returns (DeleteSalesResponse);
+}
+
+message CreateSalesRequest {
+	uint32 product_id = 1;
+	uint32 discount_price = 2;
+	string start_time = 3;
+	string end_time = 4;
+}
+message CreateSalesResponse {
+	string msg = 1;
+	uint32 status = 2;
+}
+message GetAllSalesRequest {}
+
+message Sale {
+	uint32 id = 1;
+	uint32 product_id = 2;
+	uint32 discount_price = 3;
+	string start_time = 4;
+	string end_time = 5;
+}
+message GetAllSalesResponse {
+	repeated Sale sales = 1;
+}
+message GetSalesByIdRequest {
+	uint32 sales_id = 1;
+}
+message GetSalesByIdResponse {
+	string msg = 1;
+	uint32 status = 2;
+	Sale sale = 3;
+}
+message UpdateSalesRequest {
+	uint32 id = 1;
+	uint32 product_id = 2;
+	uint32 discount_price = 3;
+	string start_time = 4;
+	string end_time = 5;
+}
+message UpdateSalesResponse {
+	string msg = 1;
+	uint32 status = 2;
+}
+message DeleteSalesRequest {
+	uint32 sales_id = 1;
+}
+message DeleteSalesResponse {
+	string msg = 1;
+	uint32 status = 2;
+}

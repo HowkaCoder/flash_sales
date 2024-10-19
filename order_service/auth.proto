@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package auth;
+
+option go_package = "protoc/auth;auth";
+
+service AuthService {
+	rpc GetUserById (GetUserByIdRequest) returns (GetUserByIdResponse);
+}
+
+message User {
+	uint32 id = 1;
+	string name = 2;
+	string email = 3;
+	string address = 4;
+}
+
+message GetUserByIdRequest {
+	uint32 user_id = 1;
+}
+message GetUserByIdResponse {
+	string msg = 1;
+	uint32 status = 2;
+	User user = 3;
+}

@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package warehouse;
+
+option go_package = "protoc/warehouse;warehouse";
+
+service Warehouse {
+	rpc CheckInventory(CheckInventoryRequest) returns (CheckInventoryResponse);
+	rpc UpdateInventory(UpdateInventoryRequest) returns (UpdateInventoryResponse);
+}
+
+message Product {
+	uint32 id = 1;
+	string name = 2;
+	string desc = 3;
+	uint32 price = 4;
+	uint32 quantity = 5;
+}
+
+message CheckInventoryRequest {
+	uint32 product_id = 1;
+}
+message CheckInventoryResponse {
+	Product product = 1;
+}
+message UpdateInventoryRequest {
+	uint32 product_id = 1;
+	uint32 quantity = 2;
+	bool mov = 3;
+}
+message UpdateInventoryResponse {
+	string msg = 1;
+	uint32 status = 2;
+}
