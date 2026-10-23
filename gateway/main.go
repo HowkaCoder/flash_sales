@@ -2,6 +2,9 @@ package main
 
 import (
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	handlers "gateway/handler"
 	pb "gateway/protoc/auth"
@@ -10,136 +13,84 @@ import (
 	wb "gateway/protoc/warehouse"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func dial(addr string) *grpc.ClientConn {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("grpc client %s: %v", addr, err)
+	}
+	return conn
+}
+
 func main() {
+	aConn := dial(getenv("AUTH_ADDR", "localhost:50051"))
+	wConn := dial(getenv("WAREHOUSE_ADDR", "localhost:50052"))
+	oConn := dial(getenv("ORDER_ADDR", "localhost:50053"))
+	sConn := dial(getenv("SALES_ADDR", "localhost:50054"))
+	defer aConn.Close()
+	defer wConn.Close()
+	defer oConn.Close()
+	defer sConn.Close()
+
+	authClient := pb.NewAuthServiceClient(aConn)
+	warehouseClient := wb.NewWarehouseClient(wConn)
+	orderClient := ob.NewOrderServiceClient(oConn)
+	salesClient := sb.NewSalesClient(sConn)
+
 	app := fiber.New()
+	app.Use(recover.New())
+	app.Use(logger.New())
 
-	a_conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure(), grpc.WithBlock())
-	if err != nil {
-		log.Fatalf("did not connect to Auth service: %v", err)
+	auth := handlers.RequireAuth(authClient)
+
+	app.Post("/register", func(c *fiber.Ctx) error { return handlers.RegisterUser(c, authClient) })
+	app.Post("/login", func(c *fiber.Ctx) error { return handlers.LoginUser(c, authClient) })
+	app.Post("/validate", func(c *fiber.Ctx) error { return handlers.ValidateJWT(c, authClient) })
+	app.Get("/users", auth, func(c *fiber.Ctx) error { return handlers.GetAllUsers(c, authClient) })
+	app.Get("/users/:id", auth, func(c *fiber.Ctx) error { return handlers.GetUserById(c, authClient) })
+	app.Patch("/users", auth, func(c *fiber.Ctx) error { return handlers.UpdateUser(c, authClient) })
+	app.Delete("/users/:id", auth, func(c *fiber.Ctx) error { return handlers.DeleteUser(c, authClient) })
+
+	app.Get("/warehouse/products", func(c *fiber.Ctx) error { return handlers.GetAllProducts(c, warehouseClient) })
+	app.Get("/warehouse/product/:id", func(c *fiber.Ctx) error { return handlers.GetProductById(c, warehouseClient) })
+	app.Get("/warehouse/product/:id/inventory", func(c *fiber.Ctx) error { return handlers.CheckInventory(c, warehouseClient) })
+	app.Post("/warehouse/product", auth, func(c *fiber.Ctx) error { return handlers.CreateProduct(c, warehouseClient) })
+	app.Patch("/warehouse/product", auth, func(c *fiber.Ctx) error { return handlers.UpdateProduct(c, warehouseClient) })
+	app.Delete("/warehouse/product/:id", auth, func(c *fiber.Ctx) error { return handlers.DeleteProduct(c, warehouseClient) })
+	app.Patch("/warehouse/product/inventory", auth, func(c *fiber.Ctx) error { return handlers.UpdateInventory(c, warehouseClient) })
+
+	app.Get("/sales", func(c *fiber.Ctx) error { return handlers.GetAllSales(c, salesClient) })
+	app.Get("/sales/:id", func(c *fiber.Ctx) error { return handlers.GetSalesById(c, salesClient) })
+	app.Post("/sales", auth, func(c *fiber.Ctx) error { return handlers.CreateSales(c, salesClient) })
+	app.Patch("/sales", auth, func(c *fiber.Ctx) error { return handlers.UpdateSales(c, salesClient) })
+	app.Delete("/sales/:id", auth, func(c *fiber.Ctx) error { return handlers.DeleteSales(c, salesClient) })
+
+	app.Get("/orders", auth, func(c *fiber.Ctx) error { return handlers.GetAllOrders(c, orderClient) })
+	app.Get("/orders/:id", auth, func(c *fiber.Ctx) error { return handlers.GetOrderById(c, orderClient) })
+	app.Post("/orders", auth, func(c *fiber.Ctx) error { return handlers.CreateOrder(c, orderClient) })
+	app.Patch("/orders", auth, func(c *fiber.Ctx) error { return handlers.UpdateOrder(c, orderClient) })
+	app.Delete("/orders/:id", auth, func(c *fiber.Ctx) error { return handlers.DeleteOrder(c, orderClient) })
+
+	go func() {
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+		<-stop
+		app.Shutdown()
+	}()
+
+	if err := app.Listen(":" + getenv("PORT", "3000")); err != nil {
+		log.Fatal(err)
 	}
-	defer a_conn.Close()
-
-	w_conn, err := grpc.Dial("localhost:50052", grpc.WithInsecure(), grpc.WithBlock())
-	if err != nil {
-		log.Fatalf("did not connect to Warehouse service: %v", err)
-	}
-	defer w_conn.Close()
-
-	o_conn, err := grpc.Dial("localhost:50053", grpc.WithInsecure(), grpc.WithBlock())
-	if err != nil {
-		log.Fatalf("did not connect to order serviCe : %v", err)
-	}
-	defer o_conn.Close()
-
-	s_conn, err := grpc.Dial("localhost:50054", grpc.WithInsecure(), grpc.WithBlock())
-	if err != nil {
-		log.Fatalf("did not connect to sAles service: %v , err")
-	}
-	defer s_conn.Close()
-
-	a_client := pb.NewAuthServiceClient(a_conn)
-	w_client := wb.NewWarehouseClient(w_conn)
-	o_client := ob.NewOrderServiceClient(o_conn)
-	s_client := sb.NewSalesClient(s_conn)
-
-	app.Delete("/sales/:id", func(c *fiber.Ctx) error {
-		return handlers.DeleteSales(c, s_client)
-	})
-
-	app.Patch("/sales", func(c *fiber.Ctx) error {
-		return handlers.UpdateSales(c, s_client)
-	})
-
-	app.Post("/sales", func(c *fiber.Ctx) error {
-		return handlers.CreateSales(c, s_client)
-	})
-
-	app.Get("/sales/:id", func(c *fiber.Ctx) error {
-		return handlers.GetSalesById(c, s_client)
-	})
-
-	app.Get("/sales", func(c *fiber.Ctx) error {
-		return handlers.GetAllSales(c, s_client)
-	})
-
-	app.Delete("/orders/:id", func(c *fiber.Ctx) error {
-		return handlers.DeleteOrder(c, o_client)
-	})
-
-	app.Patch("/orders", func(c *fiber.Ctx) error {
-		return handlers.UpdateOrder(c, o_client)
-	})
-
-	app.Post("/orders", func(c *fiber.Ctx) error {
-		return handlers.CreateOrder(c, o_client)
-	})
-
-	app.Get("/orders/:id", func(c *fiber.Ctx) error {
-		return handlers.GetOrderById(c, o_client)
-	})
-
-	app.Get("/orders", func(c *fiber.Ctx) error {
-		return handlers.GetAllOrders(c, o_client)
-	})
-
-	app.Post("/register", func(c *fiber.Ctx) error {
-		return handlers.RegisterUser(c, a_client)
-	})
-
-	app.Post("/login", func(c *fiber.Ctx) error {
-		return handlers.LoginUser(c, a_client)
-	})
-
-	app.Get("/users", func(c *fiber.Ctx) error {
-		return handlers.GetAllUsers(c, a_client)
-	})
-
-	app.Get("/users/:id", func(c *fiber.Ctx) error {
-		return handlers.GetUserById(c, a_client)
-	})
-
-	app.Patch("/users", func(c *fiber.Ctx) error {
-		return handlers.UpdateUser(c, a_client)
-	})
-
-	app.Delete("/users/:id", func(c *fiber.Ctx) error {
-		return handlers.DeleteUser(c, a_client)
-	})
-
-	app.Post("/validate", func(c *fiber.Ctx) error {
-		return handlers.ValidateJWT(c, a_client)
-	})
-
-	app.Post("/warehouse/product", func(c *fiber.Ctx) error {
-		return handlers.CreateProduct(c, w_client)
-	})
-
-	app.Patch("/warehouse/product", func(c *fiber.Ctx) error {
-		return handlers.UpdateProduct(c, w_client)
-	})
-
-	app.Get("/warehouse/products", func(c *fiber.Ctx) error {
-		return handlers.GetAllProducts(c, w_client)
-	})
-
-	app.Get("/warehouse/product/:id", func(c *fiber.Ctx) error {
-		return handlers.GetProductById(c, w_client)
-	})
-
-	app.Delete("/warehouse/product/:id", func(c *fiber.Ctx) error {
-		return handlers.DeleteProduct(c, w_client)
-	})
-
-	app.Get("/warehouse/product/:id/inventory", func(c *fiber.Ctx) error {
-		return handlers.CheckInventory(c, w_client)
-	})
-
-	app.Patch("/warehouse/product/inventory", func(c *fiber.Ctx) error {
-		return handlers.UpdateInventory(c, w_client)
-	})
-
-	log.Fatal(app.Listen(":3000"))
 }

@@ -1,93 +1,82 @@
-version: '3.8'
+x-service: &service
+  restart: unless-stopped
+  environment: &env
+    KAFKA_BROKERS: kafka:9092
+    DB_PATH: /app/data/service.db
 
 services:
-  auth_service:
-    build: ./auth_service
-    container_name: auth_service
-    networks:
-      - app-network
-    ports:
-      - "50051:50051"
-    depends_on:
-      - kafka_service
-
   gateway:
     build: ./gateway
-    container_name: gateway
-    networks:
-      - app-network
     ports:
-      - "8080:8080"
+      - "3000:3000"
+    environment:
+      AUTH_ADDR: auth_service:50051
+      WAREHOUSE_ADDR: warehouse_service:50052
+      ORDER_ADDR: order_service:50053
+      SALES_ADDR: sales_service:50054
     depends_on:
       - auth_service
+      - warehouse_service
       - order_service
       - sales_service
-      - warehouse_service
 
-  notification_service:
-    build: ./notification_service
-    container_name: notification_service
-    networks:
-      - app-network
-    depends_on:
-      - kafka_service
-
-  order_service:
-    build: ./order_service
-    container_name: order_service
-    networks:
-      - app-network
-    ports:
-      - "50052:50052"
-    depends_on:
-      - kafka_service
-      - auth_service
-
-  sales_service:
-    build: ./sales_service
-    container_name: sales_service
-    networks:
-      - app-network
-    ports:
-      - "50053:50053"
-    depends_on:
-      - kafka_service
-      - warehouse_service
+  auth_service:
+    <<: *service
+    build: ./auth_service
+    environment:
+      <<: *env
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    volumes:
+      - auth_data:/app/data
 
   warehouse_service:
+    <<: *service
     build: ./warehouse_service
-    container_name: warehouse_service
-    networks:
-      - app-network
-    ports:
-      - "50054:50054"
-    depends_on:
-      - kafka_service
+    volumes:
+      - warehouse_data:/app/data
 
-  kafka_service:
-    container_name: kafka_service
-    image: bitnami/kafka:latest
-    networks:
-      - app-network
-    ports:
-      - "9092:9092"
+  order_service:
+    <<: *service
+    build: ./order_service
     environment:
-      - KAFKA_BROKER_ID=1
-      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
-      - KAFKA_LISTENERS=PLAINTEXT://kafka:9092
-      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      <<: *env
+      AUTH_ADDR: auth_service:50051
+      WAREHOUSE_ADDR: warehouse_service:50052
+    volumes:
+      - order_data:/app/data
+
+  sales_service:
+    <<: *service
+    build: ./sales_service
+    environment:
+      <<: *env
+      WAREHOUSE_ADDR: warehouse_service:50052
+    volumes:
+      - sales_data:/app/data
+
+  notification_service:
+    <<: *service
+    build: ./notification_service
+    volumes:
+      - notification_data:/app/data
     depends_on:
-      - zookeeper
+      - kafka
 
-  zookeeper:
-    image: bitnami/zookeeper:latest
-    container_name: zookeeper
-    ports:
-      - "2181:2181"
-    networks:
-      - app-network
+  kafka:
+    image: bitnami/kafka:3.7
+    environment:
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
 
-networks:
-  app-network:
-    driver: bridge
-
+volumes:
+  auth_data:
+  warehouse_data:
+  order_data:
+  sales_data:
+  notification_data:

@@ -2,59 +2,42 @@ package grpc
 
 import (
 	"context"
-	"log"
+	"fmt"
 	ab "order_service/protoc/auth"
 	pb "order_service/protoc/warehouse"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-func GetUserById(client ab.AuthServiceClient, user_id uint32) *ab.GetUserByIdResponse {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+const timeout = 3 * time.Second
+
+func UserExists(client ab.AuthServiceClient, userID uint32) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	req := &ab.GetUserByIdRequest{
-		UserId: user_id,
+	res, err := client.GetUserById(ctx, &ab.GetUserByIdRequest{UserId: userID})
+	if status.Code(err) == codes.NotFound {
+		return false, nil
 	}
-
-	res, err := client.GetUserById(ctx, req)
 	if err != nil {
-		log.Fatalf("Error with Get User By ID requet: %v", err)
+		return false, fmt.Errorf("auth service: %w", err)
 	}
-
-	log.Printf("User : %v , Msg : %v and Code : %v", res.User, res.Msg, res.Status)
-	return res
+	return res.User != nil && res.User.Id != 0, nil
 }
 
-func CheckInventory(client pb.WarehouseClient, product_id uint32) *pb.CheckInventoryResponse {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+func ChangeInventory(client pb.WarehouseClient, productID, quantity uint32, add bool) (uint32, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	req := &pb.CheckInventoryRequest{
-		ProductId: product_id,
-	}
-	res, err := client.CheckInventory(ctx, req)
-	if err != nil {
-		log.Fatalf("Error with CheckInventory request : %v", err)
-	}
-	log.Printf("Product : %v ", res.Product)
-	return res
-}
-
-func UpdateInventory(client pb.WarehouseClient, product_id, quantity uint32, mov bool) (string, uint32) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	req := &pb.UpdateInventoryRequest{
-		ProductId: product_id,
+	res, err := client.UpdateInventory(ctx, &pb.UpdateInventoryRequest{
+		ProductId: productID,
 		Quantity:  quantity,
-		Mov:       mov,
-	}
-
-	res, err := client.UpdateInventory(ctx, req)
+		Mov:       add,
+	})
 	if err != nil {
-		log.Fatalf("Error with UpdateInventory request : %v", err)
+		return 0, "", fmt.Errorf("warehouse service: %w", err)
 	}
-
-	log.Println("Msg : %v and Status : %v", res.Msg, res.Status)
-	return res.Msg, res.Status
+	return res.Status, res.Msg, nil
 }

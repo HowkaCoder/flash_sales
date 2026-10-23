@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [auth_service, gateway, notification_service, order_service, sales_service, warehouse_service]
+    defaults:
+      run:
+        working-directory: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.service }}/go.mod
+          cache-dependency-path: ${{ matrix.service }}/go.sum
+      - name: vet, build, test
+        run: |
+          run() {
+            if ! "$@" > out.txt 2>&1; then
+              cat out.txt
+              echo "::error title=${{ matrix.service }}: $*::$(tail -n 80 out.txt | sed -e 's/%/%25/g' | sed -e ':a;N;$!ba;s/\n/%0A/g')"
+              exit 1
+            fi
+            cat out.txt
+          }
+          test -z "$(gofmt -l . | grep -v '.pb.go')"
+          run go vet ./...
+          run go build ./...
+          run go test -race ./...
