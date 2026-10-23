@@ -73,7 +73,7 @@ func GetSalesById(c *fiber.Ctx, client pb.SalesClient) error {
 func UpdateSales(c *fiber.Ctx, client pb.SalesClient) error {
 	var req pb.UpdateSalesRequest
 	var request struct {
-		ID            uint   `json:id`
+		ID            uint   `json:"id"`
 		ProductID     uint   `json:"product_id"`
 		DiscountPrice uint   `json:"discount_price"`
 		StartTime     string `json:"start_time"`

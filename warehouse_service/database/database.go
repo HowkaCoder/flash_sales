@@ -4,17 +4,19 @@ import (
 	"log"
 	"warehouse_service/model"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
-func SetupDB() *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("database.db"), &gorm.Config{})
+func SetupDB(path string) *gorm.DB {
+	db, err := gorm.Open(sqlite.Open(path+"?_pragma=busy_timeout(5000)"), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Error with database st upping : %v !", err)
 	}
 
-	db.AutoMigrate(&model.Product{})
+	if err := db.AutoMigrate(&model.Product{}); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
 
 	return db
 

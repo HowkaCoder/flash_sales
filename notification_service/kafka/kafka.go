@@ -1,51 +1,56 @@
 package kafka
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"notification_service/model"
+	"strings"
 
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/segmentio/kafka-go"
 	"gorm.io/gorm"
 )
 
-type KafkaConsumer struct {
-	Consumer *kafka.Consumer
-	DB       *gorm.DB
+type Consumer struct {
+	reader *kafka.Reader
+	db     *gorm.DB
 }
 
-func NewKafkaConsumer(brokers string, groupID string, db *gorm.DB) (*KafkaConsumer, error) {
-	config := &kafka.ConfigMap{
-		"bootstrap.servers": brokers,
-		"group.id":          groupID,
-		"auto.offset.reset": "earliest",
+func NewConsumer(brokers, groupID string, db *gorm.DB) *Consumer {
+	return &Consumer{
+		reader: kafka.NewReader(kafka.ReaderConfig{
+			Brokers: strings.Split(brokers, ","),
+			GroupID: groupID,
+			Topic:   "notifications",
+		}),
+		db: db,
 	}
-	consumer, err := kafka.NewConsumer(config)
-	if err != nil {
-		return nil, err
-	}
-	consumer.SubscribeTopics([]string{"notifications"}, nil)
-	return &KafkaConsumer{Consumer: consumer, DB: db}, nil
 }
 
-func (kc *KafkaConsumer) Start() {
+func (c *Consumer) Run(ctx context.Context) error {
+	defer c.reader.Close()
+
 	for {
-		msg, err := kc.Consumer.ReadMessage(-1)
+		msg, err := c.reader.ReadMessage(ctx)
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
 		if err != nil {
-			log.Printf("Error reading message: %v", err)
-			continue
+			return err
 		}
 
-		var notification model.Notification
-		if err := json.Unmarshal(msg.Value, &notification); err != nil {
-			log.Printf("Error unmarshalling message: %v", err)
+		var n model.Notification
+		if err := json.Unmarshal(msg.Value, &n); err != nil {
+			log.Printf("skip message at offset %d: %v", msg.Offset, err)
 			continue
 		}
-		log.Printf("Message : %v  and Service name : %v", notification.Message, notification.ServiceName)
-		if err := kc.DB.Create(&notification).Error; err != nil {
-			log.Printf("Error saving notification: %v", err)
-		} else {
-			log.Printf("Notification saved: %+v", notification)
+		n.Status = "received"
+
+		if err := c.db.WithContext(ctx).Create(&n).Error; err != nil {
+			log.Printf("save notification: %v", err)
+			continue
 		}
+		log.Printf("%s: %s", n.ServiceName, n.Message)
 	}
 }

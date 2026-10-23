@@ -1,22 +1,31 @@
 package main
 
 import (
+	"context"
 	"log"
 	"notification_service/database"
 	"notification_service/kafka"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
-	db := database.SetupDB()
-
-	//kafkaConsumer, err := kafka.NewKafkaConsumer("0.0.0.0:9092,0.0.0.0:9093,0.0.0.0:9094", "notification_group", db)
-	kafkaConsumer, err := kafka.NewKafkaConsumer("kafka1:9092,kafka2:9093,kafka3:9094", "notification_group", db)
-
-	if err != nil {
-		log.Fatalf("Error initializing Kafka consumer: %v", err)
+	brokers := os.Getenv("KAFKA_BROKERS")
+	if brokers == "" {
+		brokers = "localhost:9092"
+	}
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "notifications.db"
 	}
 
-	go kafkaConsumer.Start()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	select {} // Блокировка основного потока
+	consumer := kafka.NewConsumer(brokers, "notification_group", database.SetupDB(dbPath))
+	log.Printf("consuming notifications from %s", brokers)
+	if err := consumer.Run(ctx); err != nil {
+		log.Fatal(err)
+	}
 }

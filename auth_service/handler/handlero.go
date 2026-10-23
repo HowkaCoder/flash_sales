@@ -11,12 +11,15 @@ import (
 
 	"github.com/dgrijalva/jwt-go"
 	"golang.org/x/crypto/bcrypt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 )
 
 type AuthService struct {
 	DB        *gorm.DB
 	JwtSecret []byte
+	Publisher *kafka.Publisher
 	pb.UnimplementedAuthServiceServer
 }
 
@@ -35,6 +38,7 @@ func (s *AuthService) Register(ctx context.Context, req *pb.RegisterRequest) (*p
 	if err := s.DB.Create(&user).Error; err != nil {
 		return &pb.RegisterResponse{Msg: "Failed to register user", Status: 500}, err
 	}
+	s.Publisher.Notify("user_registered", fmt.Sprintf("user %d registered", user.ID))
 	return &pb.RegisterResponse{Msg: "User successfully registered", Status: 200}, nil
 }
 
@@ -52,7 +56,6 @@ func (s *AuthService) Login(ctx context.Context, req *pb.LoginRequest) (*pb.Logi
 	if err != nil {
 		return &pb.LoginResponse{Status: 500}, err
 	}
-	kafka.NotifyKafka("users", "Register - Request", "New User Lol!")
 	return &pb.LoginResponse{Token: token, Status: 200}, nil
 }
 
@@ -78,7 +81,10 @@ func (s *AuthService) GetAllUsers(ctx context.Context, req *pb.GetAllUsersReques
 func (s *AuthService) GetUserById(ctx context.Context, req *pb.GetUserByIdRequest) (*pb.GetUserByIdResponse, error) {
 	var user model.User
 	if err := s.DB.First(&user, req.UserId).Error; err != nil {
-		return &pb.GetUserByIdResponse{Status: 404}, err
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, status.Error(codes.NotFound, "user not found")
+		}
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	return &pb.GetUserByIdResponse{

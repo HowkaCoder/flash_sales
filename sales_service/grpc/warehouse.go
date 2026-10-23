@@ -2,24 +2,18 @@ package grpc
 
 import (
 	"context"
-	"log"
+	"fmt"
 	wb "sales_service/protoc/warehouse"
 	"time"
 )
 
-func GetProductById(client wb.WarehouseClient, product_id uint32) *wb.GetProductByIdResponse {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+func ProductExists(client wb.WarehouseClient, productID uint32) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	req := &wb.GetProductByIdRequest{
-		ProductId: product_id,
-	}
-
-	res, err := client.GetProductById(ctx, req)
+	res, err := client.GetProductById(ctx, &wb.GetProductByIdRequest{ProductId: productID})
 	if err != nil {
-		log.Fatalf("Error with Get product by ID request")
+		return false, fmt.Errorf("warehouse service: %w", err)
 	}
-
-	log.Printf("Msg : %v   Status Code : %v and Product : %v ", res.Msg, res.Status, res.Product)
-	return res
+	return res.Status == 200 && res.Product != nil && res.Product.Id != 0, nil
 }
