@@ -1,66 +1,62 @@
 package kafka
 
 import (
-	"fmt"
-	"log"
-
 	"context"
+	"encoding/json"
+	"log"
+	"strings"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 )
 
-type ProducerConfig struct {
-	Brokers []string
-	Topic   string
+const topic = "notifications"
+
+type Publisher struct {
+	writer  *kafka.Writer
+	service string
 }
 
-func CreateProducer(cfg ProducerConfig) *kafka.Writer {
-	writer := kafka.NewWriter(kafka.WriterConfig{
-		Brokers:  cfg.Brokers,
-		Topic:    cfg.Topic,
-		Balancer: &kafka.LeastBytes{},
-	})
-
-	return writer
-}
-
-func SendMessage(writer *kafka.Writer, key, value string) error {
-	err := writer.WriteMessages(context.Background(),
-		kafka.Message{
-			Key:   []byte(key),
-			Value: []byte(value),
+func NewPublisher(brokers, service string) *Publisher {
+	if brokers == "" {
+		return nil
+	}
+	return &Publisher{
+		writer: &kafka.Writer{
+			Addr:                   kafka.TCP(strings.Split(brokers, ",")...),
+			Topic:                  topic,
+			Balancer:               &kafka.LeastBytes{},
+			AllowAutoTopicCreation: true,
 		},
-	)
-	if err != nil {
-		log.Printf("Ошибка отправки сообщения: %v\n", err)
-		return err
-	}
-	fmt.Println("Сообщение успешно отправлено")
-	return nil
-}
-func NotifyKafka(topic, key, message string) {
-	producerConfig := ProducerConfig{
-		Brokers: []string{"localhost:9092", "localhost:9093", "localhost:9094"},
-		Topic:   topic,
-	}
-
-	producer := CreateProducer(producerConfig)
-
-	err := SendMessage(producer, key, message)
-	if err != nil {
-		fmt.Printf("Ошибка отправки сообщения: %v\n", err)
-	}
-
-	err = CloseProducer(producer)
-	if err != nil {
-		fmt.Printf("Ошибка закрытия продюсера: %v\n", err)
+		service: service,
 	}
 }
-func CloseProducer(writer *kafka.Writer) error {
-	err := writer.Close()
-	if err != nil {
-		log.Printf("Ошибка закрытия продюсера: %v\n", err)
-		return err
+
+func (p *Publisher) Notify(event, message string) {
+	if p == nil {
+		return
 	}
-	return nil
+
+	payload, err := json.Marshal(map[string]string{
+		"service_name": p.service,
+		"event_type":   event,
+		"message":      message,
+	})
+	if err != nil {
+		log.Printf("kafka: marshal: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := p.writer.WriteMessages(ctx, kafka.Message{Key: []byte(event), Value: payload}); err != nil {
+		log.Printf("kafka: publish %s: %v", event, err)
+	}
+}
+
+func (p *Publisher) Close() error {
+	if p == nil {
+		return nil
+	}
+	return p.writer.Close()
 }

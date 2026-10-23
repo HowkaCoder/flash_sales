@@ -3,36 +3,58 @@ package main
 import (
 	"log"
 	"net"
+	"os"
+	"os/signal"
 	"sales_service/database"
 	"sales_service/handler"
+	"sales_service/kafka"
 	pb "sales_service/protoc/sales"
 	wb "sales_service/protoc/warehouse"
+	"syscall"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-func main() {
-	w_conn, err := grpc.Dial("localhost:50052", grpc.WithInsecure(), grpc.WithBlock())
-	if err != nil {
-		log.Fatalf("Error with connecting Warehouse service: %v", err)
+func getenv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
+	return def
+}
 
-	defer w_conn.Close()
+func main() {
+	wConn, err := grpc.NewClient(getenv("WAREHOUSE_ADDR", "localhost:50052"), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("warehouse client: %v", err)
+	}
+	defer wConn.Close()
 
-	w_client := wb.NewWarehouseClient(w_conn)
-
-	db := database.SetupDB()
+	publisher := kafka.NewPublisher(os.Getenv("KAFKA_BROKERS"), "sales_service")
+	defer publisher.Close()
 
 	server := grpc.NewServer()
-	pb.RegisterSalesServer(server, &handler.SaleService{DB: db, Wclient: w_client})
+	pb.RegisterSalesServer(server, &handler.SaleService{
+		DB:        database.SetupDB(getenv("DB_PATH", "sales.db")),
+		Wclient:   wb.NewWarehouseClient(wConn),
+		Publisher: publisher,
+	})
 
-	lis, err := net.Listen("tcp", ":50054")
+	addr := getenv("GRPC_ADDR", ":50054")
+	lis, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Fatalf("Error with listening server: %v", err)
+		log.Fatalf("listen %s: %v", addr, err)
 	}
 
-	log.Println("Server listening on :50054")
+	go func() {
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+		<-stop
+		server.GracefulStop()
+	}()
+
+	log.Printf("listening on %s", addr)
 	if err := server.Serve(lis); err != nil {
-		log.Fatalf("Error %v", err)
+		log.Fatal(err)
 	}
 }

@@ -4,15 +4,17 @@ import (
 	"log"
 	"notification_service/model"
 
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
-func SetupDB() *gorm.DB {
-	db, err := gorm.Open(sqlite.Open("notification.db"), &gorm.Config{})
+func SetupDB(path string) *gorm.DB {
+	db, err := gorm.Open(sqlite.Open(path+"?_pragma=busy_timeout(5000)"), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Error opening database: %v", err)
 	}
-	db.AutoMigrate(&model.Notification{})
+	if err := db.AutoMigrate(&model.Notification{}); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
 	return db
 }

@@ -12,7 +12,6 @@ import (
 
 func CreateOrder(c *fiber.Ctx, client pb.OrderServiceClient) error {
 	var request struct {
-		UserID    uint   `json:"user_id"`
 		ProductID uint   `json:"product_id"`
 		Quantity  uint   `json:"quantity"`
 		Status    string `json:"status"`
@@ -27,7 +26,7 @@ func CreateOrder(c *fiber.Ctx, client pb.OrderServiceClient) error {
 
 	req.ProductId = uint32(request.ProductID)
 	req.Quantity = uint32(request.Quantity)
-	req.UserId = uint32(request.UserID)
+	req.UserId, _ = c.Locals("user_id").(uint32)
 	req.Status = request.Status
 
 	res, err := client.CreateOrder(ctx, &req)
