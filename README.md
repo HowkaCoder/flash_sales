@@ -1,61 +1,103 @@
-# Flash Sales Microservices Project
+# Flash Sales
 
-## Overview
+Microservice backend for flash sales: limited stock, many buyers at the same second. Six Go services talk over gRPC, events go through Kafka, everything starts with one `docker compose up`.
 
-Flash Sales is a microservices-based project designed for managing flash sales campaigns, where users can participate in limited-time promotions with high demand. This project aims to demonstrate an event-driven architecture for handling high-concurrency environments, providing real-time updates and seamless user experiences. It was built with scalability, resilience, and simplicity in mind.
+![Go](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white)
+![gRPC](https://img.shields.io/badge/gRPC-protobuf-244c5a)
+![Kafka](https://img.shields.io/badge/Kafka-events-231F20?logo=apachekafka&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)
+[![ci](https://github.com/HowkaCoder/flash_sales/actions/workflows/ci.yml/badge.svg)](https://github.com/HowkaCoder/flash_sales/actions/workflows/ci.yml)
 
-## Microservices Overview
+## Architecture
 
-1. **User Service**  
-   The User Service handles user registration, authentication, and management. It ensures that only verified users can participate in flash sales events.
+```
+                 HTTP :3000
+client ─────────► gateway ──── JWT check ────► auth_service      :50051
+                     │
+                     ├──── gRPC ─────────────► warehouse_service :50052
+                     ├──── gRPC ─────────────► order_service     :50053 ──► auth, warehouse
+                     └──── gRPC ─────────────► sales_service     :50054 ──► warehouse
 
-2. **Product Service**  
-   The Product Service manages the product catalog, inventory, and pricing. It provides real-time updates on product availability and handles dynamic pricing during flash sales events.
+auth, order, sales ── events ──► Kafka "notifications" ──► notification_service
+```
 
-3. **Sales Service**  
-   The Sales Service is responsible for processing transactions during flash sales. It ensures fairness by managing the queue of purchase requests and securing orders for users as stock becomes available.
+| Service | Responsibility |
+|---|---|
+| `gateway` | REST API, validates JWT through `auth_service`, routes to gRPC services |
+| `auth_service` | users, bcrypt passwords, JWT issue and validation |
+| `warehouse_service` | products and stock |
+| `order_service` | orders: reserves stock first, then saves the order |
+| `sales_service` | time-limited discounts for products |
+| `notification_service` | consumes events from Kafka and stores them |
 
-4. **Notification Service**  
-   The Notification Service sends real-time updates to users about their orders, stock availability, and promotional offers. It supports multiple notification channels like email and SMS.
+Each service owns its data (separate SQLite database) and has its own Go module.
 
-5. **Order Service**  
-   The Order Service handles order processing and management. It coordinates with the Sales Service to ensure successful transaction completion and updates the order history for each user.
+## How overselling is prevented
 
-## Technology Stack
+The classic flash sale bug is "check stock, then decrease it": two buyers read `quantity = 1` at the same time and both get the item.
 
-This project employs a modern stack for building distributed microservices:
+Here the warehouse decreases stock with one conditional statement:
 
-- **Golang**: The core programming language used for all microservices, known for its simplicity, efficiency, and concurrency support.
-- **gRPC**: A high-performance RPC framework that facilitates communication between microservices with contract-based service definitions.
-- **Kafka**: An event-streaming platform that ensures reliable communication between services in an event-driven architecture.
-- **SQLite**: A lightweight and fast embedded database used for local persistence in microservices, which can be swapped with a more robust database like PostgreSQL for production environments.
-- **Docker & Docker Compose**: Containerization technologies used to simplify the development and deployment process. Docker Compose manages the orchestration of all services and dependencies.
-- **Event-Driven Architecture**: The project follows an event-driven design where services communicate asynchronously using Kafka. This architecture allows for scalable and decoupled microservices.
+```sql
+UPDATE products SET quantity = quantity - ? WHERE id = ? AND quantity >= ?
+```
 
-### System Architecture
+If no row was changed, there is not enough stock and the order is rejected with `409`. The order service reserves stock **before** writing the order; if writing fails, the stock is returned. Changing the quantity of an order moves only the difference, deleting an order returns the items.
 
-The project uses an event-driven architecture where the microservices are loosely coupled and communicate through Kafka. Each service operates independently but subscribes to relevant events from other services. This architecture ensures that the system can handle high levels of concurrent transactions during flash sales while maintaining consistency and integrity.
+`warehouse_service` has a test where 50 buyers compete for 10 items in parallel: exactly 10 succeed and the stock ends at zero.
 
-## Project Development Roadmap
+## Getting started
 
-### Future Improvements
+```bash
+cp .env.example .env    # set JWT_SECRET
+docker compose up --build
+```
 
-1. **Kubernetes (K8s) Integration**  
-   In the next phase, we plan to introduce Kubernetes (K8s) for managing and orchestrating our microservices. A Kafka cluster will be deployed on K8s to handle distributed event streaming. This will improve the scalability and reliability of our messaging system.
-   
-2. **API Gateway and Reverse Proxy**  
-   An API Gateway will be introduced to provide a single entry point for all user-facing services. Additionally, a reverse proxy will be added to handle SSL termination, ensuring all traffic is encrypted.
+```bash
+curl -X POST localhost:3000/register -d '{"name":"Ali","email":"ali@example.com","password":"secret123","address":"Tashkent"}' -H 'Content-Type: application/json'
+TOKEN=$(curl -s -X POST localhost:3000/login -d '{"email":"ali@example.com","password":"secret123"}' -H 'Content-Type: application/json' | jq -r .token)
 
-3. **CI/CD Pipeline**  
-   Continuous Integration and Continuous Deployment (CI/CD) pipelines will be integrated into the project. This will enable automated testing, building, and deployment of microservices, ensuring fast and reliable rollouts.
+curl -X POST localhost:3000/warehouse/product -H "Authorization: Bearer $TOKEN" -d '{"name":"Phone","desc":"128GB","price":300,"quantity":10}' -H 'Content-Type: application/json'
+curl -X POST localhost:3000/orders -H "Authorization: Bearer $TOKEN" -d '{"product_id":1,"quantity":2}' -H 'Content-Type: application/json'
+```
 
-### Potential Enhancements:
-- **Advanced Monitoring**: Incorporating Prometheus and Grafana for real-time monitoring of microservice performance and health.
-- **Horizontal Scaling**: Adding support for autoscaling microservices based on traffic and resource usage.
+Every service also runs locally with `go run .`; addresses default to `localhost` and the ports above.
 
-## Developer's Comments
+## Configuration
 
-This project was developed in a short amount of time, and while it is currently minimalistic, it provides a solid foundation for a larger, more robust system. The current implementation demonstrates key microservice patterns and uses essential technologies like gRPC, Kafka, and Docker to handle event-driven architecture.
+| Variable | Used by | Default |
+|---|---|---|
+| `PORT` | gateway | `3000` |
+| `GRPC_ADDR` | gRPC services | `:50051` … `:50054` |
+| `AUTH_ADDR`, `WAREHOUSE_ADDR`, `ORDER_ADDR`, `SALES_ADDR` | clients | `localhost:<port>` |
+| `JWT_SECRET` | auth_service | required |
+| `KAFKA_BROKERS` | auth, order, sales, notification | events are off if empty |
+| `DB_PATH` | services with storage | `<service>.db` |
 
-In the future, I aim to expand the system by implementing a fully-fledged CI/CD pipeline, adding K8s support for service orchestration, and improving overall system security and scalability. Although it’s a basic prototype, it can serve as a starting point for handling large-scale flash sales applications.
+## API
 
+| Method | Path | Auth |
+|---|---|---|
+| `POST` | `/register`, `/login`, `/validate` | — |
+| `GET` | `/warehouse/products`, `/warehouse/product/:id`, `/warehouse/product/:id/inventory` | — |
+| `POST`, `PATCH`, `DELETE` | `/warehouse/product…` | JWT |
+| `GET` | `/sales`, `/sales/:id` | — |
+| `POST`, `PATCH`, `DELETE` | `/sales…` | JWT |
+| `GET`, `POST`, `PATCH`, `DELETE` | `/orders…` | JWT, the buyer is taken from the token |
+| `GET`, `PATCH`, `DELETE` | `/users…` | JWT |
+
+## Tests
+
+```bash
+cd warehouse_service && go test -race ./...
+cd order_service && go test -race ./...
+```
+
+Order service tests use in-memory fakes of the auth and warehouse gRPC clients.
+
+## What's next
+
+- Roles: right now any authenticated user can manage products and sales
+- Apply active sale prices when an order is created
+- Transactional outbox for events, so an event is never lost when Kafka is down
+- PostgreSQL instead of SQLite for production

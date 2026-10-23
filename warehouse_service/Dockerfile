@@ -1,21 +1,12 @@
-FROM golang:1.23.1 AS builder
-
-WORKDIR /app
-
+FROM golang:1.23-alpine AS build
+WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-
 COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/app .
 
-
-RUN CGO_ENABLED=0 GOOS=linux go build -o warehouse_service ./main.go
-
-
-FROM alpine:latest
-
-WORKDIR /root/
-
-COPY --from=builder /app/warehouse_service .
-
-CMD ["./warehouse_service"]
-
+FROM alpine:3.20
+WORKDIR /app
+COPY --from=build /out/app .
+RUN mkdir -p data
+CMD ["./app"]

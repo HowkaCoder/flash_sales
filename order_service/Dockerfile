@@ -1,21 +1,12 @@
-FROM golang:1.23.1 AS builder
-
-WORKDIR /app
-
+FROM golang:1.23-alpine AS build
+WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-
 COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/app .
 
-# Соберите приложение
-RUN CGO_ENABLED=0 GOOS=linux go build -o order_service ./main.go
-
-# Создайте финальный образ
-FROM alpine:latest
-
-WORKDIR /root/
-
-COPY --from=builder /app/order_service .
-
-CMD ["./order_service"]
-
+FROM alpine:3.20
+WORKDIR /app
+COPY --from=build /out/app .
+RUN mkdir -p data
+CMD ["./app"]
