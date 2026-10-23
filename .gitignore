@@ -1,0 +1,8 @@
+.env
+*.db
+/*/auth_service
+/*/order_service
+/*/sales_service
+/*/warehouse_service
+/*/notification_service
+/*/gateway
