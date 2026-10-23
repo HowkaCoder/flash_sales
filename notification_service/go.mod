@@ -3,8 +3,8 @@ module notification_service
 go 1.23.1
 
 require (
-	github.com/confluentinc/confluent-kafka-go v1.9.2
-	gorm.io/driver/sqlite v1.5.6
+	github.com/segmentio/kafka-go v0.4.47
+	github.com/glebarez/sqlite v1.11.0
 	gorm.io/gorm v1.25.12
 )
 

@@ -15,9 +15,9 @@ import (
 )
 
 type SaleService struct {
-	DB *gorm.DB
-
-	Wclient wb.WarehouseClient
+	DB        *gorm.DB
+	Wclient   wb.WarehouseClient
+	Publisher *kafka.Publisher
 	pb.UnimplementedSalesServer
 }
 
@@ -37,7 +37,7 @@ func (s *SaleService) DeleteSales(ctx context.Context, req *pb.DeleteSalesReques
 func (s *SaleService) GetSalesById(ctx context.Context, req *pb.GetSalesByIdRequest) (*pb.GetSalesByIdResponse, error) {
 	var sale model.Sale
 	if err := s.DB.First(&sale, uint(req.SalesId)).Error; err != nil {
-		fmt.Sprintf("Error with getting sale by id: %v", err)
+		log.Printf("get sale %d: %v", req.SalesId, err)
 		return &pb.GetSalesByIdResponse{
 			Msg:    "Sales not found",
 			Status: 404,
@@ -92,13 +92,13 @@ func (s *SaleService) UpdateSales(ctx context.Context, req *pb.UpdateSalesReques
 		eSale.DiscountPrice = uint(req.DiscountPrice)
 	}
 	if req.ProductId != 0 {
-		res := grpc.GetProductById(s.Wclient, req.ProductId)
-
-		if res.Product.Id == 0 {
-			return &pb.UpdateSalesResponse{
-				Msg:    "Product Not Found",
-				Status: 404,
-			}, nil
+		ok, err := grpc.ProductExists(s.Wclient, req.ProductId)
+		if err != nil {
+			log.Printf("check product %d: %v", req.ProductId, err)
+			return &pb.UpdateSalesResponse{Msg: "Warehouse service is unavailable", Status: 503}, nil
+		}
+		if !ok {
+			return &pb.UpdateSalesResponse{Msg: "Product Not Found", Status: 404}, nil
 		}
 
 		eSale.ProductID = uint(req.ProductId)
@@ -143,24 +143,24 @@ func (s *SaleService) CreateSales(ctx context.Context, req *pb.CreateSalesReques
 
 	start_time, err := time.Parse(time.RFC3339, req.StartTime)
 	if err != nil {
-		return &pb.CreateSalesResponse{Msg: "Error with start_time parsing", Status: 500}, nil
+		return &pb.CreateSalesResponse{Msg: "start_time must be in RFC3339 format", Status: 400}, nil
 	}
 
 	end_time, err := time.Parse(time.RFC3339, req.EndTime)
 	if err != nil {
-		return &pb.CreateSalesResponse{Msg: "Error with end_time parsing", Status: 500}, nil
+		return &pb.CreateSalesResponse{Msg: "end_time must be in RFC3339 format", Status: 400}, nil
 	}
 
 	if !end_time.After(start_time) {
-		return &pb.CreateSalesResponse{Msg: "end time must be after the start time", Status: 500}, nil
+		return &pb.CreateSalesResponse{Msg: "end time must be after the start time", Status: 400}, nil
 	}
-	res := grpc.GetProductById(s.Wclient, req.ProductId)
-
-	if res.Product.Id == 0 {
-		return &pb.CreateSalesResponse{
-			Msg:    "Product not found!",
-			Status: 404,
-		}, nil
+	ok, err := grpc.ProductExists(s.Wclient, req.ProductId)
+	if err != nil {
+		log.Printf("check product %d: %v", req.ProductId, err)
+		return &pb.CreateSalesResponse{Msg: "Warehouse service is unavailable", Status: 503}, nil
+	}
+	if !ok {
+		return &pb.CreateSalesResponse{Msg: "Product not found", Status: 404}, nil
 	}
 
 	sale := model.Sale{
@@ -171,10 +171,11 @@ func (s *SaleService) CreateSales(ctx context.Context, req *pb.CreateSalesReques
 	}
 
 	if err := s.DB.Create(&sale).Error; err != nil {
-		return &pb.CreateSalesResponse{Msg: "Error with sales creating in database", Status: 500}, err
+		log.Printf("create sale: %v", err)
+		return &pb.CreateSalesResponse{Msg: "Error with sales creating in database", Status: 500}, nil
 	}
 
-	kafka.NotifyKafka("sales", "CreateSale - Request", "New Sales Guys!!!!!")
+	s.Publisher.Notify("sale_created", fmt.Sprintf("sale %d for product %d", sale.ID, sale.ProductID))
 	return &pb.CreateSalesResponse{
 		Msg:    "Succesfully created sales",
 		Status: 200,

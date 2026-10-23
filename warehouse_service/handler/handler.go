@@ -2,10 +2,13 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log"
 	"warehouse_service/model"
 	pb "warehouse_service/protoc/warehouse"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"gorm.io/gorm"
 )
 
@@ -98,42 +101,51 @@ func (s *WarehouseService) DeleteProduct(ctx context.Context, req *pb.DeleteProd
 
 func (s *WarehouseService) CheckInventory(ctx context.Context, req *pb.CheckInventoryRequest) (*pb.CheckInventoryResponse, error) {
 	var product model.Product
-	if err := s.DB.First(&product, req.ProductId).Error; err != nil {
-		log.Printf("Product not found: %v", err)
-		return nil, err
+	if err := s.DB.WithContext(ctx).First(&product, req.ProductId).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, status.Error(codes.NotFound, "product not found")
+		}
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	return &pb.CheckInventoryResponse{
-		Product: &pb.Product{
-			Id:       uint32(product.ID),
-			Name:     product.Name,
-			Desc:     product.Desc,
-			Price:    uint32(product.Price),
-			Quantity: uint32(product.Quantity),
-		},
-	}, nil
+	return &pb.CheckInventoryResponse{Product: toPB(product)}, nil
 }
 
 func (s *WarehouseService) UpdateInventory(ctx context.Context, req *pb.UpdateInventoryRequest) (*pb.UpdateInventoryResponse, error) {
-	var product model.Product
-	if err := s.DB.First(&product, req.ProductId).Error; err != nil {
-		log.Printf("Product not found: %v", err)
-		return &pb.UpdateInventoryResponse{Msg: "Product not found", Status: 404}, nil
+	if req.Quantity == 0 {
+		return &pb.UpdateInventoryResponse{Msg: "Quantity must be greater than zero", Status: 400}, nil
 	}
 
+	db := s.DB.WithContext(ctx).Model(&model.Product{}).Where("id = ?", req.ProductId)
+	var res *gorm.DB
 	if req.Move {
-		product.Quantity += uint(req.Quantity)
+		res = db.UpdateColumn("quantity", gorm.Expr("quantity + ?", req.Quantity))
 	} else {
-		if product.Quantity < uint(req.Quantity) {
-			return &pb.UpdateInventoryResponse{Msg: "Not enough quantity in stock", Status: 400}, nil
-		}
-		product.Quantity -= uint(req.Quantity)
+		res = db.Where("quantity >= ?", req.Quantity).UpdateColumn("quantity", gorm.Expr("quantity - ?", req.Quantity))
 	}
-
-	if err := s.DB.Save(&product).Error; err != nil {
-		log.Printf("Error updating inventory: %v", err)
+	if res.Error != nil {
+		log.Printf("Error updating inventory: %v", res.Error)
 		return &pb.UpdateInventoryResponse{Msg: "Error updating inventory", Status: 500}, nil
 	}
 
+	if res.RowsAffected == 0 {
+		var count int64
+		s.DB.WithContext(ctx).Model(&model.Product{}).Where("id = ?", req.ProductId).Count(&count)
+		if count == 0 {
+			return &pb.UpdateInventoryResponse{Msg: "Product not found", Status: 404}, nil
+		}
+		return &pb.UpdateInventoryResponse{Msg: "Not enough quantity in stock", Status: 409}, nil
+	}
+
 	return &pb.UpdateInventoryResponse{Msg: "Inventory successfully updated", Status: 200}, nil
+}
+
+func toPB(p model.Product) *pb.Product {
+	return &pb.Product{
+		Id:       uint32(p.ID),
+		Name:     p.Name,
+		Desc:     p.Desc,
+		Price:    uint32(p.Price),
+		Quantity: uint32(p.Quantity),
+	}
 }
